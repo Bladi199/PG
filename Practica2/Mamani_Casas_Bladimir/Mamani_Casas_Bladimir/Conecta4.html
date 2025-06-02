@@ -1,0 +1,151 @@
+<!DOCTYPE HTML>
+<html>
+<head>
+      <title>Conecta 4 en WebGL 2.0</title>
+      <meta http-equiv="content-type" content="text/html;charset=utf-8">
+      <style>
+          body { text-align: center; background-color: #222; color: white; }
+          canvas { background-color: #1E90FF; display: block; margin: auto; }
+      </style>
+</head>
+<body>
+      <h2>Conecta 4 en WebGL 2.0</h2>
+      <canvas id="webglcanvas" width="500" height="500"></canvas>
+      <script>
+        "use strict";
+        
+        var gl, canvas; // Variables para el contexto WebGL y el canvas
+        var programaID; // ID del programa de shaders
+        var uColor, aVertices; // Variables para atributos y uniformes de los shaders
+        var matrizTablero; // Matriz que representa el tablero del juego
+        const COLUMNAS = 7; // Número de columnas en el tablero
+        const FILAS = 6; // Número de filas en el tablero
+        var turno = "R"; // Indica el turno actual ("R" para rojo, "Y" para amarillo)
+
+
+        function iniciarWebGL() {
+            canvas = document.getElementById("webglcanvas"); // Obtiene el canvas por su ID
+            gl = canvas.getContext("webgl2"); // Obtiene el contexto WebGL 2.0
+
+            if (!gl) { // Si WebGL 2.0 no está disponible, muestra un mensaje de error
+                alert("WebGL 2.0 no disponible en tu navegador");
+                return;
+            }
+
+            gl.viewport(0, 0, gl.canvas.width, gl.canvas.height); // Configura el área de dibujo
+
+            compilaEnlazaLosShaders(); // Llama a la función que compila y enlaza los shaders
+
+            // Crea la matriz del tablero con espacios vacíos
+            matrizTablero = Array(FILAS).fill().map(() => Array(COLUMNAS).fill(" "));
+
+            gl.useProgram(programaID); // Usa el programa de shaders
+
+            uColor = gl.getUniformLocation(programaID, "uColor"); // Obtiene la ubicación de la variable uniforme de color
+            aVertices = gl.getAttribLocation(programaID, "aVertices"); // Obtiene la ubicación del atributo de vértices
+
+            gl.clearColor(0.0, 0.0, 0.3, 1.0); // Define el color de fondo del canvas (azul oscuro)
+
+            canvas.addEventListener("click", colocarFicha, false); // Agrega evento de clic al canvas
+
+            dibuja(); // Llama a la función que dibuja el tablero
+        }
+
+        
+        function compilaEnlazaLosShaders() {
+            // Código del shader de vértices
+            var vertexShaderSource = `#version 300 es
+            layout(location = 0) in vec2 aVertices; 
+            void main() {
+                gl_Position = vec4(aVertices, 0.0, 1.0); // Posición del vértice en coordenadas normalizadas
+            }`;
+
+            // Código del shader de fragmentos
+            var fragmentShaderSource = `#version 300 es
+            precision mediump float;
+            uniform vec4 uColor; // Variable de color
+            out vec4 color;
+            void main() {
+                color = uColor; // Asigna el color al fragmento
+            }`;
+
+            // Crea y compila el shader de vértices
+            var vs = gl.createShader(gl.VERTEX_SHADER);
+            gl.shaderSource(vs, vertexShaderSource);
+            gl.compileShader(vs);
+
+            // Crea y compila el shader de fragmentos
+            var fs = gl.createShader(gl.FRAGMENT_SHADER);
+            gl.shaderSource(fs, fragmentShaderSource);
+            gl.compileShader(fs);
+
+            // Crea el programa de shaders y los enlaza
+            programaID = gl.createProgram();
+            gl.attachShader(programaID, vs);
+            gl.attachShader(programaID, fs);
+            gl.linkProgram(programaID);
+            gl.useProgram(programaID);
+        }
+
+        function colocarFicha(event) {
+            var col = Math.floor((event.clientX - canvas.offsetLeft) / (canvas.width / COLUMNAS));
+            // Obtiene la columna donde se hizo clic
+
+            for (let fila = FILAS - 1; fila >= 0; fila--) { // Recorre las filas de abajo hacia arriba
+                if (matrizTablero[fila][col] === " ") { // Si la celda está vacía
+                    matrizTablero[fila][col] = turno; // Coloca la ficha del jugador actual
+                    turno = turno === "R" ? "Y" : "R"; // Cambia el turno entre "R" y "Y"
+                    dibuja(); // Redibuja el tablero
+                    return; // Sale de la función después de colocar la ficha
+                }
+            }
+        }
+
+
+        function dibuja() {
+            gl.clear(gl.COLOR_BUFFER_BIT); // Borra el canvas antes de dibujar
+
+            for (let i = 0; i < FILAS; i++) {
+                for (let j = 0; j < COLUMNAS; j++) {
+                    let color = [1, 1, 1, 1]; // Color por defecto (blanco)
+                    
+                    if (matrizTablero[i][j] === "R") color = [41/255, 231/255, 32/255, 1]; // Verde
+                    if (matrizTablero[i][j] === "Y") color = [1, 1, 0, 1]; // Amarillo
+                    
+                    dibujaFicha(j, i, color); // Dibuja la ficha correspondiente
+                }
+            }
+        }
+
+
+        function dibujaFicha(col, fila, color) {
+            gl.uniform4f(uColor, color[0], color[1], color[2], color[3]); // Asigna el color de la ficha
+
+            let x = ((col + 0.5) / COLUMNAS) * 2 - 1; // Posición X normalizada
+            let y = 1 - ((fila + 0.5) / FILAS) * 2;   // Posición Y normalizada
+            let radius = 0.13; // Radio de la ficha
+
+            let numSegments = 30; // Número de segmentos para aproximar un círculo
+            let vertices = [x, y];
+
+            for (let i = 0; i <= numSegments; i++) {
+                let angle = (i / numSegments) * Math.PI * 2;
+                vertices.push(x + Math.cos(angle) * radius);
+                vertices.push(y + Math.sin(angle) * radius);
+            }
+
+            let buffer = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.STATIC_DRAW);
+            
+            gl.enableVertexAttribArray(aVertices);
+            gl.vertexAttribPointer(aVertices, 2, gl.FLOAT, false, 0, 0);
+            gl.drawArrays(gl.TRIANGLE_FAN, 0, numSegments + 2); // Dibuja la ficha con forma de círculo
+        }
+
+
+
+        window.onload = iniciarWebGL;
+      </script>
+</body>
+</html>
