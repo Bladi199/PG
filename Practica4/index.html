@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Juego Runner WebGL</title>
+    <style>
+        canvas {
+            background: #000;
+            display: block;
+            margin: 0 auto;
+        }
+    </style>
+</head>
+<body>
+<canvas id="glCanvas" width="800" height="600"></canvas>
+
+<script type="text/javascript">
+    const canvas = document.getElementById('glCanvas');
+    const gl = canvas.getContext('webgl2');
+
+    if (!gl) {
+        alert('WebGL 2.0 no está disponible');
+    }
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    gl.clearColor(0.0, 0.0, 0.0, 1.0);
+
+    const vsSource = `#version 300 es
+    in vec4 aPosition;
+    in vec2 aTexCoord;
+    uniform mat4 uModel;
+    out vec2 vTexCoord;
+    void main() {
+        gl_Position = uModel * aPosition;
+        vTexCoord = aTexCoord;
+    }
+    `;
+
+    const fsSource = `#version 300 es
+    precision mediump float;
+    in vec2 vTexCoord;
+    uniform sampler2D uSampler;
+    out vec4 fragColor;
+    void main() {
+        fragColor = texture(uSampler, vTexCoord);
+    }
+    `;
+
+    function loadShader(gl, type, source) {
+        const shader = gl.createShader(type);
+        gl.shaderSource(shader, source);
+        gl.compileShader(shader);
+
+        if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+            alert('Error en el shader: ' + gl.getShaderInfoLog(shader));
+            gl.deleteShader(shader);
+            return null;
+        }
+        return shader;
+    }
+
+    function initShaderProgram(gl, vsSource, fsSource) {
+        const vertexShader = loadShader(gl, gl.VERTEX_SHADER, vsSource);
+        const fragmentShader = loadShader(gl, gl.FRAGMENT_SHADER, fsSource);
+
+        const shaderProgram = gl.createProgram();
+        gl.attachShader(shaderProgram, vertexShader);
+        gl.attachShader(shaderProgram, fragmentShader);
+        gl.linkProgram(shaderProgram);
+
+        if (!gl.getProgramParameter(shaderProgram, gl.LINK_STATUS)) {
+            alert('Error al iniciar el shader: ' + gl.getProgramInfoLog(shaderProgram));
+            return null;
+        }
+        return shaderProgram;
+    }
+    function identidad(r) {
+          r[0] = 1; r[4] = 0; r[ 8] = 0; r[12] = 0;
+          r[1] = 0; r[5] = 1; r[ 9] = 0; r[13] = 0;
+          r[2] = 0; r[6] = 0; r[10] = 1; r[14] = 0;
+          r[3] = 0; r[7] = 0; r[11] = 0; r[15] = 1;
+        }
+        function traslacion(matriz, tx, ty, tz) {
+          var r = new Array(16);
+          r[0] = 1; r[4] = 0; r[ 8] = 0; r[12] = tx;
+          r[1] = 0; r[5] = 1; r[ 9] = 0; r[13] = ty;
+          r[2] = 0; r[6] = 0; r[10] = 1; r[14] = tz;
+          r[3] = 0; r[7] = 0; r[11] = 0; r[15] =  1;
+          multiplica(matriz, matriz, r);
+        }
+        function escalacion(matriz, sx, sy, sz) { 
+          var r = new Array(16);
+          r[0] = sx; r[4] =  0; r[ 8] =  0; r[12] =  0;
+          r[1] =  0; r[5] = sy; r[ 9] =  0; r[13] =  0;
+          r[2] =  0; r[6] =  0; r[10] = sz; r[14] =  0;
+          r[3] =  0; r[7] =  0; r[11] =  0; r[15] =  1;
+          multiplica(matriz, matriz, r);
+        }
+        function rotacionX(matriz, theta){
+          let r = new Array(16);
+          var c = Math.cos(toRadians(theta));
+          var s = Math.sin(toRadians(theta));
+          r[0] =  1; r[4] =  0; r[ 8] =  0; r[12] = 0;
+          r[1] =  0; r[5] =  c; r[ 9] = -s; r[13] = 0;
+          r[2] =  0; r[6] =  s; r[10] =  c; r[14] = 0;
+          r[3] =  0; r[7] =  0; r[11] =  0; r[15] = 1;
+          multiplica(matriz, matriz, r); 
+        }
+        function rotacionY(matriz, theta){
+          let r = new Array(16);
+          var c = Math.cos(toRadians(theta));
+          var s = Math.sin(toRadians(theta));
+          r[0] =  c; r[4] =  0; r[ 8] =  s; r[12] = 0;
+          r[1] =  0; r[5] =  1; r[ 9] =  0; r[13] = 0;
+          r[2] = -s; r[6] =  0; r[10] =  c; r[14] = 0;
+          r[3] =  0; r[7] =  0; r[11] =  0; r[15] = 1;
+          multiplica(matriz, matriz, r);
+        }
+	
+        /* Rotación sobre Z - glRotatef */
+        function rotacionZ(matriz, theta){
+          let r = new Array(16);
+          var c = Math.cos(toRadians(theta));
+          var s = Math.sin(toRadians(theta));
+          r[0] =  c; r[4] = -s; r[ 8] =  0; r[12] = 0;
+          r[1] =  s; r[5] =  c; r[ 9] =  0; r[13] = 0;
+          r[2] =  0; r[6] =  0; r[10] =  1; r[14] = 0;
+          r[3] =  0; r[7] =  0; r[11] =  0; r[15] = 1;
+          multiplica(matriz, matriz, r);
+        }
+        function ortho(r, izq, der, abj, arr, cerca, lejos) {
+          r[0] = 2/(der - izq); r[4] =             0; r[ 8] =                  0; r[12] =         -(der + izq)/(der - izq);
+          r[1] =             0; r[5] = 2/(arr - abj); r[ 9] =                  0; r[13] =         -(arr + abj)/(arr - abj);
+          r[2] =             0; r[6] =             0; r[10] = -2/(lejos - cerca); r[14] = -(lejos + cerca)/(lejos - cerca);
+          r[3] =             0; r[7] =             0; r[11] =                  0; r[15] =                                1;
+        }
+        function frustum(r, izq, der, abj, arr, cerca, lejos) {
+          r[0] = 2*cerca/(der-izq); r[4] =                 0; r[ 8] =          (der+izq)/(der-izq); r[12] =                            0;
+          r[1] =                 0; r[5] = 2*cerca/(arr-abj); r[ 9] =          (arr+abj)/(arr-abj); r[13] =                            0;
+          r[2] =                 0; r[6] =                 0; r[10] = -(lejos+cerca)/(lejos-cerca); r[14] = -2*lejos*cerca/(lejos-cerca);
+          r[3] =                 0; r[7] =                 0; r[11] =                           -1; r[15] =                            0;
+        }
+        function perspective(r, fovy, aspecto, cerca, lejos) {
+          var ang = fovy * 0.5;
+          var f = (Math.abs(Math.sin(toRadians(ang))) < 1e-8 ? 0 : 1) / Math.tan(toRadians(ang));
+          r[0] = f/aspecto; r[4] = 0; r[ 8] =                                  0; r[12] =                                       0;
+          r[1] =         0; r[5] = f; r[ 9] =                                  0; r[13] =                                       0;
+          r[2] =         0; r[6] = 0; r[10] = -(lejos + cerca) / (lejos - cerca); r[14] =  -2.0 * lejos * cerca / (lejos - cerca);
+          r[3] =         0; r[7] = 0; r[11] =                              - 1.0; r[15] =                                       0;
+        }
+        function multiplica(c, a, b) {
+          let r = new Array(16);
+          let i, j, k;
+          for (i = 0; i < 4; i++){
+            for (j = 0; j < 4; j++){
+              let s = 0;
+              for (k = 0; k < 4; k++)
+                s = s + a[i + k * 4] * b[k + j * 4];
+                r[i + j * 4] = s;
+              }
+            }
+          for (i = 0; i < 16; i++)
+            c[i] = r[i];
+        }
+
+    const shaderProgram = initShaderProgram(gl, vsSource, fsSource);
+    const programInfo = {
+        program: shaderProgram,
+        attribLocations: {
+            vertexPosition: gl.getAttribLocation(shaderProgram, 'aPosition'),
+            textureCoord: gl.getAttribLocation(shaderProgram, 'aTexCoord'),
+        },
+        uniformLocations: {
+            uModel: gl.getUniformLocation(shaderProgram, 'uModel'),
+            uSampler: gl.getUniformLocation(shaderProgram, 'uSampler'),
+        },
+    };
+
+    const positionBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+    const positions = [
+        -1.0,  1.0,
+        -1.0, -1.0,
+         1.0,  1.0,
+         1.0, -1.0,
+    ];
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(positions), gl.STATIC_DRAW);
+
+    const texCoordBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
+    const texCoords = [
+        0.0, 0.0,
+        0.0, 1.0,
+        1.0, 0.0,
+        1.0, 1.0,
+    ];
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(texCoords), gl.STATIC_DRAW);
+
+    const vao = gl.createVertexArray();
+    gl.bindVertexArray(vao);
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+    gl.vertexAttribPointer(programInfo.attribLocations.vertexPosition, 2, gl.FLOAT, false, 0, 0);
+    gl.enableVertexAttribArray(programInfo.attribLocations.vertexPosition);
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
+    gl.vertexAttribPointer(programInfo.attribLocations.textureCoord, 2, gl.FLOAT, false, 0, 0);
+    gl.enableVertexAttribArray(programInfo.attribLocations.textureCoord);
+
+    gl.bindVertexArray(null);
+
+    function loadTexture(url) {
+        const texture = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+
+        const level = 0;
+        const internalFormat = gl.RGBA;
+        const width = 1;
+        const height = 1;
+        const border = 0;
+        const srcFormat = gl.RGBA;
+        const srcType = gl.UNSIGNED_BYTE;
+        const pixel = new Uint8Array([0, 0, 255, 255]);
+        gl.texImage2D(gl.TEXTURE_2D, level, internalFormat, width, height, border, srcFormat, srcType, pixel);
+
+        const image = new Image();
+        image.src = url;
+        image.onload = function() {
+            gl.bindTexture(gl.TEXTURE_2D, texture);
+            gl.texImage2D(gl.TEXTURE_2D, level, internalFormat, srcFormat, srcType, image);
+
+            if (isPowerOf2(image.width) && isPowerOf2(image.height)) {
+                gl.generateMipmap(gl.TEXTURE_2D);
+            } else {
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+            }
+        };
+        return texture;
+    }
+
+    function isPowerOf2(value) {
+        return (value & (value - 1)) === 0;
+    }
+
+    const fondoTexture = loadTexture('fon.jpg');
+    const personajeTexture = loadTexture('sc.png');
+    const obstaculoTexture = loadTexture('obs.png'); // Obstáculo (debes tener un archivo)
+
+    // Posición del personaje
+    let personajeX = -0.8;
+    let personajeY = 0.0;
+    const personajeScale = 0.2;
+
+    // Obstáculo
+    let obstaculos = [
+        { x: 1.2, y: -0.5, size: 0.15 },
+        { x: 1.8, y: 0.5, size: 0.15 }
+    ];
+
+    document.addEventListener('keydown', (e) => {
+        const speed = 0.1;
+        if (e.key === 'ArrowUp') {
+            personajeY += speed;
+        } else if (e.key === 'ArrowDown') {
+            personajeY -= speed;
+        }
+    });
+
+    function drawScene() {
+        gl.clearColor(0.0, 0.0, 0.0, 1.0);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+
+        gl.useProgram(programInfo.program);
+        gl.bindVertexArray(vao);
+
+        // Fondo
+        gl.uniformMatrix4fv(programInfo.uniformLocations.uModel, false, new Float32Array([
+            1, 0, 0, 0, 
+            0, 1, 0, 0, 
+            0, 0, 1, 0, 
+            0, 0, 0, 1
+        ]));
+        gl.bindTexture(gl.TEXTURE_2D, fondoTexture);
+        gl.uniform1i(programInfo.uniformLocations.uSampler, 0);
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+        // Actualizar personaje
+        //personajeX += 0.003; // velocidad horizontal automática
+
+        // Dibujar personaje
+        let modelMatrix = [
+            personajeScale, 0, 0, 0,
+            0, personajeScale, 0, 0,
+            0, 0, 1, 0,
+            personajeX, personajeY, 0, 1
+        ];
+        gl.uniformMatrix4fv(programInfo.uniformLocations.uModel, false, new Float32Array(modelMatrix));
+        gl.bindTexture(gl.TEXTURE_2D, personajeTexture);
+        gl.uniform1i(programInfo.uniformLocations.uSampler, 0);
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+        // Dibujar obstáculos
+        for (let i = 0; i < obstaculos.length; i++) {
+            let obs = obstaculos[i];
+            obs.x -= 0.01; // velocidad hacia la izquierda
+            if (obs.x < -1.5) {
+                obs.x = Math.random() * 2.0 + 1.0; // reaparecen
+                obs.y = (Math.random() - 0.5) * 2; // nueva altura
+            }
+
+            let modelMatrixObs = [
+                obs.size, 0, 0, 0,
+                0, obs.size, 0, 0,
+                0, 0, 1, 0,
+                obs.x, obs.y, 0, 1
+            ];
+            gl.uniformMatrix4fv(programInfo.uniformLocations.uModel, false, new Float32Array(modelMatrixObs));
+            gl.bindTexture(gl.TEXTURE_2D, obstaculoTexture);
+            gl.uniform1i(programInfo.uniformLocations.uSampler, 0);
+            gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+            // Colisión básica (simple)
+            if (Math.abs(personajeX - obs.x) < 0.15 && Math.abs(personajeY - obs.y) < 0.15) {
+                alert('¡Colisión! 🚑');
+                window.location.reload();
+            }
+        }
+
+        requestAnimationFrame(drawScene);
+    }
+
+    requestAnimationFrame(drawScene);
+
+</script>
+</body>
+</html>
+3
